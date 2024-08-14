@@ -1,22 +1,17 @@
 use std::marker::PhantomData;
 
-use cosmwasm_std::{entry_point, to_json_binary};
+use cosmwasm_std::{ensure, entry_point, to_json_binary};
 use cosmwasm_std::{
     Addr, Binary, Deps, DepsMut, Empty, Env, MessageInfo, Reply, ReplyOn, Response, StdResult,
     SubMsg, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
-
-use cw721_base::{ExecuteMsg as Cw721ExecuteMsg, Extension, InstantiateMsg as Cw721InstantiateMsg};
-
 use cw721_base::helpers::Cw721Contract;
-
-use cw_utils::parse_reply_instantiate_data;
+use cw721_base::{ExecuteMsg as Cw721ExecuteMsg, Extension, InstantiateMsg as Cw721InstantiateMsg};
+use cw_utils::{must_pay, parse_reply_instantiate_data};
 
 use crate::error::ContractError;
-use crate::msg::{
-    ConfigResponse, Cw20ReceiveMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg,
-};
+use crate::msg::{ConfigResponse, ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use crate::state::{Config, CONFIG};
 
 // version info for migration info
@@ -34,17 +29,14 @@ pub fn instantiate(
 ) -> Result<Response, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
-    if msg.unit_price == Uint128::new(0) {
-        return Err(ContractError::InvalidUnitPrice {});
-    }
-
-    if msg.max_tokens == 0 {
-        return Err(ContractError::InvalidMaxTokens {});
-    }
+    ensure!(
+        msg.unit_price.amount > Uint128::zero(),
+        ContractError::InvalidUnitPrice {}
+    );
+    ensure!(msg.max_tokens > 0, ContractError::InvalidMaxTokens {});
 
     let config = Config {
         cw721_address: None,
-        cw20_address: msg.cw20_address,
         unit_price: msg.unit_price,
         max_tokens: msg.max_tokens,
         owner: info.sender,
@@ -82,13 +74,14 @@ pub fn instantiate(
 pub fn reply(deps: DepsMut, _env: Env, msg: Reply) -> Result<Response, ContractError> {
     let mut config: Config = CONFIG.load(deps.storage)?;
 
-    if config.cw721_address != None {
-        return Err(ContractError::Cw721AlreadyLinked {});
-    }
-
-    if msg.id != INSTANTIATE_TOKEN_REPLY_ID {
-        return Err(ContractError::InvalidTokenReplyId {});
-    }
+    ensure!(
+        config.cw721_address == None,
+        ContractError::Cw721AlreadyLinked {}
+    );
+    ensure!(
+        msg.id == INSTANTIATE_TOKEN_REPLY_ID,
+        ContractError::InvalidTokenReplyId {}
+    );
 
     let reply = parse_reply_instantiate_data(msg).unwrap();
     config.cw721_address = Addr::unchecked(reply.contract_address).into();
@@ -113,26 +106,12 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Receive(Cw20ReceiveMsg {
-            sender,
-            amount,
-            msg,
-        }) => execute_receive(deps, info, sender, amount, msg),
+        ExecuteMsg::Mint => execute_receive(deps, info),
     }
 }
 
-pub fn execute_receive(
-    deps: DepsMut,
-    info: MessageInfo,
-    sender: String,
-    amount: Uint128,
-    _msg: Binary,
-) -> Result<Response, ContractError> {
+pub fn execute_receive(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
-    if config.cw20_address != info.sender {
-        return Err(ContractError::UnauthorizedTokenContract {});
-    }
-
     if config.cw721_address == None {
         return Err(ContractError::Uninitialized {});
     }
@@ -141,13 +120,15 @@ pub fn execute_receive(
         return Err(ContractError::SoldOut {});
     }
 
-    if amount != config.unit_price {
+    let amount = must_pay(&info, &config.unit_price.denom)?;
+
+    if amount != config.unit_price.amount {
         return Err(ContractError::WrongPaymentAmount {});
     }
 
     let mint_msg = Cw721ExecuteMsg::<Extension, Empty>::Mint {
         token_id: config.unused_token_id.to_string(),
-        owner: sender,
+        owner: info.sender.into_string(),
         token_uri: config.token_uri.clone().into(),
         extension: config.extension.clone(),
     };
@@ -176,7 +157,6 @@ fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
     let config = CONFIG.load(deps.storage)?;
     Ok(ConfigResponse {
         owner: config.owner,
-        cw20_address: config.cw20_address,
         cw721_address: config.cw721_address,
         max_tokens: config.max_tokens,
         unit_price: config.unit_price,
@@ -190,10 +170,11 @@ fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MOCK_CONTRACT_ADDR};
-    use cosmwasm_std::{from_json, to_json_binary, SubMsgResponse, SubMsgResult};
+    use cosmwasm_std::{from_json, to_json_binary, Coin, SubMsgResponse, SubMsgResult};
     use prost::Message;
+
+    use super::*;
 
     const NFT_CONTRACT_ADDR: &str = "nftcontract";
 
@@ -209,13 +190,15 @@ mod tests {
     fn initialization() {
         let mut deps = mock_dependencies();
         let msg = InstantiateMsg {
-            owner: Addr::unchecked("owner"),
+            owner: "owner".to_string(),
             max_tokens: 1,
-            unit_price: Uint128::new(1),
+            unit_price: Coin {
+                denom: "uom".to_string(),
+                amount: Uint128::one(),
+            },
             name: String::from("FirstFT"),
             symbol: String::from("FFT"),
             token_code_id: 10u64,
-            cw20_address: Addr::unchecked(MOCK_CONTRACT_ADDR),
             token_uri: String::from("https://ipfs.io/ipfs/Q"),
             extension: None,
         };
@@ -273,7 +256,6 @@ mod tests {
             config,
             Config {
                 owner: Addr::unchecked("owner"),
-                cw20_address: msg.cw20_address,
                 cw721_address: Some(Addr::unchecked(NFT_CONTRACT_ADDR)),
                 max_tokens: msg.max_tokens,
                 unit_price: msg.unit_price,
@@ -281,7 +263,7 @@ mod tests {
                 symbol: msg.symbol,
                 token_uri: msg.token_uri,
                 extension: None,
-                unused_token_id: 0
+                unused_token_id: 0,
             }
         );
     }

@@ -1,4 +1,5 @@
 use cosmwasm_std::StdError;
+use cw_utils::PaymentError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -38,4 +39,7 @@ pub enum ContractError {
 
     #[error("Cw721NotLinked")]
     Cw721NotLinked {},
+
+    #[error("{0}")]
+    PaymentError(#[from] PaymentError),
 }
