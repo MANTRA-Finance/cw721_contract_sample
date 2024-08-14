@@ -21,13 +21,6 @@ pub enum ExecuteMsg {
 }
 
 #[cw_serde]
-pub struct Cw20ReceiveMsg {
-    pub sender: String,
-    pub amount: Uint128,
-    pub msg: Binary,
-}
-
-#[cw_serde]
 pub enum MigrateMsg {}
 
 #[cw_serde]

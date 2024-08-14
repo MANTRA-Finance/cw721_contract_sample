@@ -106,11 +106,11 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Mint => execute_receive(deps, info),
+        ExecuteMsg::Mint => execute_mint(deps, info),
     }
 }
 
-pub fn execute_receive(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
+pub fn execute_mint(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
     if config.cw721_address == None {
         return Err(ContractError::Uninitialized {});
