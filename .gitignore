@@ -17,3 +17,5 @@
 
 #Wallet mnemonic
 .env
+
+/artifacts

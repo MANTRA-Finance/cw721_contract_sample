@@ -1,10 +1,9 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 
-use cosmwasm_std::{Addr, Uint128, Binary};
+use cosmwasm_std::{Addr, Binary, Uint128};
 use cw721_base::Extension;
 
 #[cw_serde]
-#[serde(rename_all = "snake_case")]
 pub struct InstantiateMsg {
     pub owner: Addr,
     pub max_tokens: u32,

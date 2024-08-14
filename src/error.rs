@@ -11,7 +11,7 @@ pub enum ContractError {
 
     #[error("Custom Error val: {val:?}")]
     CustomError { val: String },
-    
+
     #[error("InvalidUnitPrice")]
     InvalidUnitPrice {},
 
